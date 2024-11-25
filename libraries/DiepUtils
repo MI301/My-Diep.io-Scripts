@@ -1,0 +1,718 @@
+// ==UserScript==
+// @name         DiepUtils(25.11.2024)
+// @namespace    http://tampermonkey.net/
+// @version      2024-11-23
+// @description  A library which hooks into diep.io, adding useful functions which you can use to make your own userscript.
+// @author       Mi300
+// @match        https://diep.io/*
+// @match        https://diep-io.rivet.game/*
+// @icon         https://upload.wikimedia.org/wikipedia/commons/2/25/Cube_Animation.gif
+// @run-at       document-start
+// @grant        none
+// ==/UserScript==
+window.DiepUtils = null;
+let awaitGameLoad = setInterval(() =>
+{
+    'use strict';
+    if (typeof extern === "undefined" || typeof input === "undefined")
+    {
+        return;
+    }
+    clearInterval(awaitGameLoad);
+    const cr = CanvasRenderingContext2D.prototype;
+    const mainCanvas = document.getElementById("canvas");
+    const ctx = document.getElementById("canvas")
+        .getContext("2d");
+    let ctxTransform = [1, 0, 0, 1, 0, 0];
+    let arcs = [];
+    let text = [];
+    let curFrameEntities = [];
+    let entities = [];
+    let ownPlayer;
+    let minimapX = 0;
+    let minimapY = 0;
+    let minimapWidth = 0;
+    let minimapHeight = 0;
+    let worldX = 0;
+    let worldY = 0;
+    let fov = 0.5;
+
+    function getConvar(c)
+    {
+        return extern.get_convar(c);
+    }
+
+    function parseDiepHex(v)
+    {
+        return "#" + v.split("x")[1];
+    }
+
+    function parseDiepScore(s)
+    {
+        let scoreMultiplier = 1;
+        if (s[s.length - 1] === "k")
+        {
+            scoreMultiplier = 1000;
+        }
+        else if (s[s.length - 1] === "m")
+        {
+            scoreMultiplier = 1000000;
+        }
+        else if (!s.includes("."))
+        {
+            const toInt = parseInt(s, 10);
+            if (toInt === NaN)
+            {
+                return null;
+            }
+            return toInt;
+        }
+        else return null;
+        const toFloat = parseFloat(s.slice(0, -1));
+        if (toFloat === NaN)
+        {
+            return null;
+        }
+        return toFloat * scoreMultiplier;
+    }
+    input.set_convar = new Proxy(input.set_convar,
+    {
+        apply: function (method, context, args)
+        {
+            config[args[0]] = args[1];
+            return Reflect.apply(method, context, args)
+        }
+    });
+
+    function isSameArc(x, y)
+    {
+        for (let i = 0; i < arcs.length; ++i)
+        {
+            if (arcs[i].x == x && arcs[i].y == y)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function getShapePos(vertices)
+    {
+        let ret = [0, 0];
+        for (let i = 0; i < vertices.length; i++)
+        {
+            ret[0] += vertices[i][0];
+            ret[1] += vertices[i][1];
+        }
+        ret[0] /= vertices.length;
+        ret[1] /= vertices.length;
+        return ret;
+    }
+
+    function computeCoordinates(ax, ay)
+    {
+        const dX = ax - minimapX;
+        const dY = ay - minimapY;
+        worldX = (dX / minimapWidth) * Constants.ARENA_WIDTH;
+        worldY = (dY / minimapHeight) * Constants.ARENA_HEIGHT;
+    }
+
+    function screen_to_world_position(x, y)
+    {
+        const midX = x - window.innerWidth / 2;
+        const midY = y - window.innerHeight / 2;
+        const scaledX = (midX) / (fov / 2.8);
+        const scaledY = (midY) / (fov / 2.8);
+        return [
+            worldX + scaledX,
+            worldY + scaledY,
+        ]
+    }
+
+    function screen_to_world_position2(x, y)
+    {
+        const midX = x - mainCanvas.width / 2;
+        const midY = y - mainCanvas.height / 2;
+        const scaledX = (midX) / (fov / 2.8);
+        const scaledY = (midY) / (fov / 2.8);
+        return [
+            worldX + scaledX,
+            worldY + scaledY,
+        ]
+    }
+
+    function world_to_screen_position(x, y)
+    {
+        const deltaX = x - worldX;
+        const deltaY = y - worldY;
+        const unscaledX = window.innerWidth / 2 + deltaX * (fov / 2.8);
+        const unscaledY = window.innerHeight / 2 + deltaY * (fov / 2.8);
+        let ret = [
+            unscaledX,
+            unscaledY,
+        ]
+        return ret;
+    }
+
+    function world_to_screen_position2(x, y)
+    {
+        const deltaX = x - worldX;
+        const deltaY = y - worldY;
+        const unscaledX = mainCanvas.width / 2 + deltaX * (fov / 2.8);
+        const unscaledY = mainCanvas.height / 2 + deltaY * (fov / 2.8);
+        let ret = [
+            unscaledX,
+            unscaledY,
+        ]
+        return ret;
+    }
+
+    function world_to_minimap_position(x, y)
+    {
+        return [
+            minimapWidth * (x / Constants.ARENA_WIDTH) + minimapX,
+            minimapHeight * (y / Constants.ARENA_HEIGHT) + minimapY
+        ]
+    }
+
+    function getDistance(x1, y1, x2, y2)
+    {
+        const distX = x1 - x2;
+        const distY = y1 - y2;
+        return Math.hypot(distX, distY);
+    }
+    // arr: array of objects with x and y properties
+    function getClosestTo(arr, x, y)
+    {
+        return arr.reduce(function (acc, cur)
+        {
+            if (!acc) return cur;
+            const dist_acc = getDistance(x, y, acc.x, acc.y);
+            const dist_cur = getDistance(x, y, cur.x, cur.y);
+            return dist_acc > dist_cur ? cur : acc;
+        }, null)
+    }
+
+    function getClosestTo2(arr, wx, wy)
+    {
+        return arr.reduce(function (acc, cur)
+        {
+            if (!acc) return cur;
+            const dist_acc = getDistance(wx, wy, acc.wx, acc.wy);
+            const dist_cur = getDistance(wx, wy, cur.wx, cur.wy);
+            return dist_acc > dist_cur ? cur : acc;
+        }, null)
+    }
+    // arr: takes an input of an array of texts but gets the centre of the image
+    function getClosestText(arr, x, y)
+    {
+        return arr.reduce(function (acc, cur)
+        {
+            if (!acc) return cur;
+            const dist_acc = getDistance(x, y, acc.mx, acc.my);
+            const dist_cur = getDistance(x, y, cur.mx, cur.my);
+            return dist_acc > dist_cur ? cur : acc;
+        }, null)
+    }
+
+    function getCurFramePlayers()
+    {
+        for (let a = 0; a < arcs.length; ++a)
+        {
+            const arc = arcs[a];
+            const rr = (arc.r) / (fov);
+            const [wx, wy] = screen_to_world_position2(arc.x, arc.y);
+            if (!inBounds(wx, wy))
+            {
+                continue;
+            }
+            const scoreText = [
+                arc.x,
+                arc.y - arc.r * 1.3,
+            ]
+            const nameText = [
+                arc.x,
+                arc.y - arc.r * 2,
+            ]
+            const healthText = [
+                arc.x,
+                arc.y + arc.r * 1.3,
+            ]
+            const closestScoreText = getClosestText(text, ...scoreText);
+            const closestNameText = getClosestText(text, ...nameText);
+            const closestHealthText = getClosestText(text, ...healthText);
+            if (!closestScoreText) continue;
+            const distanceToScoreText = getDistance(...scoreText, closestScoreText.mx, closestScoreText.my);
+            const distanceToNameText = getDistance(...nameText, closestNameText.mx, closestNameText.my);
+            const distanceToHealthText = getDistance(...healthText, closestHealthText.mx, closestHealthText.my);
+            let score = "";
+            let name = "";
+            let health = "";
+            if (distanceToScoreText < 25)
+            {
+                score = parseDiepScore(closestScoreText.text) || "";
+            }
+            if (distanceToNameText < 25)
+            {
+                name = closestNameText.text;
+            }
+            if (distanceToHealthText < 25)
+            {
+                health = closestHealthText.text; //input.set_convar("ren_raw_health_values", true);
+            }
+            if (score !== "" && rr > 19)
+            {
+                let num = curFrameEntities.length;
+                curFrameEntities.push(
+                {
+                    type: "player",
+                    color: arc.fs,
+                    x: arc.x,
+                    y: arc.y,
+                    r: arc.r,
+                    rr,
+                    wx,
+                    wy,
+                    name,
+                    score,
+                    health,
+                    num,
+                })
+            }
+        }
+        const closestArc = getClosestTo(arcs, mainCanvas.width / 2, mainCanvas.height / 2);
+        if (closestArc && getDistance(closestArc.x, closestArc.y, mainCanvas.width / 2, mainCanvas.height / 2) < 80)
+        {
+            if (closestArc.r / fov > 19)
+            {
+                const [wx, wy] = screen_to_world_position(closestArc.x, closestArc.y);
+                ownPlayer = {
+                    x: closestArc.x,
+                    y: closestArc.y,
+                    wx,
+                    wy,
+                    color: closestArc.fs,
+                }
+            }
+        }
+    }
+
+    function inBounds(wx, wy)
+    {
+        return wx > -300 && wx < 26300 && wy > -300 && wy < 26300;
+    }
+
+    function updateEntities()
+    {
+        let nextEntities = [];
+        for (let i = 0; i < curFrameEntities.length; ++i)
+        {
+            const closestMatch = getClosestTo2(entities, curFrameEntities[i].wx, curFrameEntities[i].wy);
+            if (closestMatch && getDistance(closestMatch.wx, closestMatch.wy, curFrameEntities[i].wx, curFrameEntities[i].wy) < 250 && closestMatch.name === curFrameEntities[i].name)
+            {
+                if (curFrameEntities[i].type == "shape" && shapeColorTable[curFrameEntities[i].name] !== curFrameEntities[i].color)
+                {
+                    curFrameEntities[i].color = shapeColorTable[curFrameEntities[i].name];
+                }
+                nextEntities.push(curFrameEntities[i]);
+            }
+            else
+            {
+                if (!(curFrameEntities[i].type == "shape" && shapeColorTable[curFrameEntities[i].name] !== curFrameEntities[i].color))
+                {
+                    nextEntities.push(curFrameEntities[i]);
+                }
+            }
+        }
+        for (let i = 0; i < entities.length; ++i)
+        {
+            const closestMatch = getClosestTo2(nextEntities, entities[i].wx, entities[i].wy);
+            if (!closestMatch || getDistance(closestMatch.wx, closestMatch.wy, entities[i].wx, entities[i].wy) > 250 || closestMatch.name !== entities[i].name)
+            {}
+        }
+        entities = nextEntities;
+    }
+    class Hook
+    {
+        constructor()
+        {
+            this.overriddenFuncs = [];
+            let that = this;
+            const _toString = Function.prototype.toString;
+            const toString = function ()
+            {
+                switch (this)
+                {
+                case toString:
+                {
+                    return _toString.call(_toString)
+                }
+                }
+                for (let i = 0; i < that.overriddenFuncs.length; i++)
+                {
+                    const origional = that.overriddenFuncs[i][0];
+                    const modified = that.overriddenFuncs[i][1];
+                    if (this == modified)
+                    {
+                        return _toString.call(origional);
+                    }
+                }
+                return _toString.call(this);
+            };
+            Function.prototype.toString = toString;
+        }
+        addHook(obj, func, callee, function_end = function (_this, args) {})
+        {
+            const origional = obj[func];
+            const modified = new Proxy(obj[func],
+            {
+                apply: function (method, context, args)
+                {
+                    const thing = callee(context, args) || [context, args];
+                    context = thing[0];
+                    args = thing[1];
+                    try
+                    {
+                        return Reflect.apply(method, context, args);
+                    }
+                    finally
+                    {
+                        function_end(this, args);
+                    }
+                }
+            });
+            this.overriddenFuncs.push([origional, modified]);
+            obj[func] = modified;
+        }
+        freeze()
+        {
+            Object.freeze(CanvasRenderingContext2D.prototype);
+            Object.freeze(Function.prototype);
+        }
+    }
+    const hook = new Hook();
+    const config = {
+        grid_base_alpha: 0.05,
+        ren_raw_health_values: false,
+    }
+    const Constants = {
+        ARENA_WIDTH: 26000,
+        ARENA_HEIGHT: 26000,
+    }
+    const upgrades = [
+    {
+        hex: "#8efffb",
+        num: 0,
+        posX: 0,
+        posY: 0,
+    },
+    {
+        hex: "#b4ff8e",
+        num: 1,
+        posX: 1,
+        posY: 0,
+    },
+    {
+        hex: "#ff8e8e",
+        num: 2,
+        posX: 0,
+        posY: 1,
+    },
+    {
+        hex: "#ffeb8e",
+        num: 3,
+        posX: 1,
+        posY: 1,
+    },
+    {
+        hex: "#8eb2ff",
+        num: 4,
+        posX: 0,
+        posY: 2,
+    },
+    {
+        hex: "#b58eff",
+        num: 5,
+        posX: 1,
+        posY: 2,
+    }, ]
+    const upgradeColors = ["#8efffb", "#b4ff8e", "#ff8e8e", "#ffeb8e", "#8eb2ff", "#b58eff"];
+    const upgradeColorTable = {
+        "#8efffb": upgrades[0],
+        "#b4ff8e": upgrades[1],
+        "#ff8e8e": upgrades[2],
+        "#ffeb8e": upgrades[3],
+        "#8eb2ff": upgrades[4],
+        "#b58eff": upgrades[5],
+    }
+    const upgradePositionTable = new Array(6);
+    const shapeNameTable = {
+        3: "Triangle",
+        4: "Square",
+        5: "Pentagon",
+    }
+    const shapeColorTable = {
+        "Triangle": "#fc7677",
+        "Square": "#ffe869",
+        "Pentagon": "#768dfc"
+    }
+    hook.addHook(cr, "arc", function (_this, args)
+    {
+        const t = _this.getTransform();
+        if (isSameArc(t.e + args[0], t.f + args[1])) return [_this, args];
+        arcs.push(
+        {
+            x: t.e + args[0],
+            y: t.f + args[1],
+            r: Math.hypot(t.b, t.a),
+            fs: _this.fillStyle,
+            ss: _this.strokeStyle
+        });
+        return [_this, args];
+    });
+    hook.addHook(cr, "setTransform", function (_this, args)
+    {
+        ctxTransform = args;
+        return [_this, args];
+    });
+    hook.addHook(cr, "drawImage", function (_this, args)
+    {
+        if (args[0].renderMethod)
+        {
+            const x = ctxTransform[4] + args[1];
+            const y = ctxTransform[5] + args[2];
+            if (args[0].renderMethod.method === "strokeText")
+            {
+                text.push(
+                {
+                    x,
+                    y,
+                    cw: args[0].width,
+                    ch: args[0].height,
+                    mx: x + args[0].width / 4,
+                    my: y + args[0].height / 4,
+                    text: args[0].renderMethod.text,
+                });
+            }
+            if (args[0].renderMethod.method === "fillRect")
+            {
+                if (args[0].isUpgradeButton)
+                {
+                    upgradePositionTable[args[0].upgradeButton.num] = [x, y];
+                }
+            }
+        }
+        return [_this, args];
+    });
+    hook.addHook(cr, "strokeText", function (_this, args)
+    {
+        if (_this.canvas.id !== "canvas")
+        {
+            _this.canvas.renderMethod = {
+                method: "strokeText",
+                text: args[0],
+                args,
+                fillStyle: _this.fillStyle,
+            };
+        }
+        return [_this, args];
+    });
+    hook.addHook(cr, "fillRect", function (_this, args)
+    {
+        if (_this.canvas.id !== "canvas")
+        {
+            if (upgradeColors.includes(_this.fillStyle))
+            {
+                _this.canvas.isUpgradeButton = true;
+                _this.canvas.upgradeButton = upgradeColorTable[_this.fillStyle];
+            }
+            _this.canvas.renderMethod = {
+                method: "fillRect",
+                args,
+                fillStyle: _this.fillStyle,
+                strokeStyle: _this.strokeStyle,
+            };
+        }
+        return [_this, args];
+    });
+    hook.addHook(cr, "strokeRect", function (_this, args)
+    {
+        const transform = _this.getTransform();
+        minimapX = transform.e;
+        minimapY = transform.f
+        minimapWidth = transform.a;
+        minimapHeight = transform.d;
+        return [_this, args];
+    });
+    hook.addHook(cr, "stroke", function (_this, args)
+    {
+        if (["#cccccc", "#cdcdcd"].includes(_this.fillStyle) && _this.strokeStyle == '#000000')
+        {
+            fov = (_this.globalAlpha / config.grid_base_alpha);
+        }
+        return [_this, args];
+    });
+    let vertexRenderingStack = new Array();
+    let shapeRenderPart = -1;
+    hook.addHook(cr, "beginPath", function (_this, args)
+    {
+        shapeRenderPart = 0;
+        vertexRenderingStack = new Array();
+        return [_this, args];
+    });
+    hook.addHook(cr, "moveTo", function (_this, args)
+    {
+        shapeRenderPart++;
+        vertexRenderingStack.push(args);
+        return [_this, args];
+    });
+    hook.addHook(cr, "lineTo", function (_this, args)
+    {
+        shapeRenderPart++;
+        vertexRenderingStack.push(args);
+        return [_this, args];
+    });
+    hook.addHook(cr, "fill", function (_this, args)
+    {
+        const [x, y] = getShapePos(vertexRenderingStack);
+        if (_this.fillStyle == "#000000" && _this.globalAlpha > 0.949 && shapeRenderPart == 3)
+        {
+            computeCoordinates(x, y);
+            return [_this, args];
+        }
+        const [wx, wy] = screen_to_world_position(x, y);
+        if ([3, 4, 5].includes(shapeRenderPart))
+        {
+            curFrameEntities.push(
+            {
+                type: "shape",
+                x,
+                y,
+                wx,
+                wy,
+                name: shapeNameTable[shapeRenderPart],
+                color: _this.fillStyle,
+            });
+        }
+        return [_this, args];
+    });
+
+    function onFrame()
+    {
+        window.requestAnimationFrame(onFrame);
+        getCurFramePlayers();
+        updateEntities();
+        curFrameEntities = [];
+        arcs = [];
+        text = [];
+    }
+
+    function init()
+    {
+        onFrame();
+        performance._now = performance.now
+        performance.now = function ()
+        {
+            return performance._now() * 1.25;
+        }
+        document.addEventListener("keydown", function (ev)
+        {
+            if (ev.key == "t")
+            {
+                if (upgradePositionTable[0])
+                {
+                    const [x, y] = upgradePositionTable[0];
+                    extern.onTouchMove(-1, x + 10, y + 25);
+                    setTimeout(function ()
+                    {
+                        extern.onTouchStart(-1, x + 10, y + 25);
+                        setTimeout(function ()
+                        {
+                            extern.onTouchEnd(-1, x + 10, y + 25);
+                        }, 10);
+                    }, 10);
+                }
+            }
+        });
+    }
+    hook.freeze();
+    init();
+    class Core
+    {}
+    class EntityManager
+    {
+        getEntities()
+        {
+            return entities;
+        }
+        getPlayers()
+        {
+            return entities.filter(entity => entity.type === "player");
+        }
+        getShapes()
+        {
+            return entities.filter(entity => entity.type === "shape");
+        }
+        getTriangles()
+        {
+            return entities.filter(entity => entity.type === "shape" && entity.name === "Triangle");
+        }
+        getSquares()
+        {
+            return entities.filter(entity => entity.type === "shape" && entity.name === "Square");
+        }
+        getPentagons()
+        {
+            return entities.filter(entity => entity.type === "shape" && entity.name === "Pentagon");
+        }
+        getPlayer()
+        {
+            return ownPlayer;
+        }
+        getClosestEntity(type = null, name = null)
+        {
+            return entities.filter(entity => (type === null || type === entity.type) && (name === null || name === entity.name))
+                .reduce(function (acc, cur)
+                {
+                    if (!acc) return cur;
+                    const dist_acc = getDistance(worldX, worldY, acc.wx, acc.wy);
+                    const dist_cur = getDistance(worldX, worldY, cur.wx, cur.wy);
+                    return dist_acc > dist_cur ? cur : acc;
+                }, null)
+        }
+    }
+    class GameManager
+    {}
+    class Controller
+    {
+        setMousePos(){
+
+        }
+
+        getMousePos(){
+
+        }
+
+        upgradeTank(u){
+
+        }
+
+
+
+
+
+
+
+    }
+    class DiepUtil
+    {
+        constructor()
+        {
+            this.entityManager = new EntityManager();
+            this.gameManager = new GameManager();
+            this.controller = new Controller();
+            this.core = new Core();
+        }
+    }
+    const dieputils = window.DiepUtils = new DiepUtil();
+}, 400);
