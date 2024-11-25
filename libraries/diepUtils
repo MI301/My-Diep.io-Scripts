@@ -709,8 +709,8 @@ let awaitGameLoad = setInterval(() =>
         constructor()
         {
             this.entityManager = new EntityManager();
-            this.arenaManager = new ArenaManager();
-            this.playerManager = new PlayerManager();
+            this.gameManager = new GameManager();
+            this.controller = new Controller();
             this.core = new Core();
         }
     }
