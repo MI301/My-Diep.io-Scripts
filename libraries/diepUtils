@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Mi300 API
+// @name         DiepUtils
 // @namespace    http://tampermonkey.net/
 // @version      2024-11-23
 // @description  A library which hooks into diep.io, adding useful functions which you can use to make your own userscript.
@@ -10,7 +10,7 @@
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
-window.Mi300 = null;
+window.DiepUtils = null;
 let awaitGameLoad = setInterval(() =>
 {
     'use strict';
@@ -704,7 +704,7 @@ let awaitGameLoad = setInterval(() =>
 
 
     }
-    class Mi300
+    class DiepUtil
     {
         constructor()
         {
@@ -714,5 +714,5 @@ let awaitGameLoad = setInterval(() =>
             this.core = new Core();
         }
     }
-    const mi300 = window.Mi300 = new Mi300();
+    const dieputils = window.DiepUtils = new DiepUtil();
 }, 400);
