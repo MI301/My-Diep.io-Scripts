@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         DiepUtils(30.11.2024)
+// @name         DiepUtils(31.11.2024)
 // @namespace    http://tampermonkey.net/
 // @version      2024-11-23
 // @description  A library which hooks into diep.io, adding useful functions which you can use to make your own userscript.
@@ -51,6 +51,25 @@ let awaitGameLoad = setInterval(() =>
     let curHealthBarBase = null;
     let lastArc = {x:0,y:0}
     let teamColor = "";
+    let movementKeysPressed = {
+      "w": false,
+      "s": false,
+      "a": false,
+      "d": false,
+    }
+    let movementKeys = ["w", "a", "s", "d"];
+
+
+    document.addEventListener("keydown", function(ev){
+      if(movementKeys.includes(ev.key)){
+        movementKeysPressed[ev.key] = true;
+      }
+    });
+    document.addEventListener("keyup", function(ev){
+      if(movementKeys.includes(ev.key)){
+        movementKeysPressed[ev.key] = false;
+      }
+    });
 
     function log(text)
     {
@@ -439,7 +458,7 @@ const sample_size = 20;
 
     function forceHealthText()
     {
-        if (window.extern.get_convar("ren_raw_health_values") === "false")
+        if (window.extern && window.extern.get_convar && window.extern.get_convar("ren_raw_health_values") === "false")
         {
             window.extern.set_convar("ren_raw_health_values", true);
             log("Forced raw health values.");
@@ -448,11 +467,9 @@ const sample_size = 20;
 
   let forcingU = false;
     function forceU(){
-      console.log(canUpgrade())
       if(canUpgrade()){
         forcingU = true;
         extern.onKeyDown(21);
-        console.log("w")
       }
       else if(forcingU){
         forcingU = false;
@@ -572,15 +589,15 @@ const sample_size = 20;
     extern.onKeyDown(keyTable["d"]);
     extern.onKeyUp(keyTable["a"]);
   } else if (dir < -Math.PI * 4 / 6 || dir > Math.PI * 4 / 6) {//a
-    extern.onKeyUp(keyTable["d"]);
     extern.onKeyDown(keyTable["a"]);
+    extern.onKeyUp(keyTable["d"]);
   }
   if (dir > Math.PI * 1 / 6 && dir < Math.PI * 5 / 6) {//s
     extern.onKeyDown(keyTable["s"]);
     extern.onKeyUp(keyTable["w"]);
   } else if (dir > -Math.PI * 5 / 6 && dir < -Math.PI * 1 / 6) {//w
-    extern.onKeyUp(keyTable["d"]);
-    extern.onKeyDown(keyTable["a"]);
+    extern.onKeyDown(keyTable["w"]);
+    extern.onKeyUp(keyTable["s"]);
   }
   // =======================================================
 }
@@ -1384,6 +1401,20 @@ const statNumbers = {
         extern.onKeyUp(keyTable["a"]);
         extern.onKeyUp(keyTable["s"]);
         extern.onKeyUp(keyTable["d"]);
+      }
+
+      getMovementKeys(){
+        return movementKeysPressed;
+      }
+      pressMovementKeys(keysObj){
+        for(let key in keysObj){
+          if(keysObj[key]){
+            extern.onKeyDown(keyTable[key]);
+          }
+          else{
+            extern.onKeyUp(keyTable[key]);
+          }
+        }
       }
     }
     class LeaderboardReader
