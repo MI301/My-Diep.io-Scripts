@@ -341,7 +341,7 @@ let awaitGameLoad = setInterval(() =>
         return wx > -2000 && wx < 28000 && wy > -2000 && wy < 28000;
     }
 
-const sample_size = 7;
+const sample_size = 20;
     function updateEntities()// EXTREMELY MESSY CODE
     {
         let nextEntities = [];
@@ -562,6 +562,28 @@ const sample_size = 7;
   function getTankBulletSpeedOffset(tank){
     return bulletSpeedOffsets[tank] || 1;
   }
+
+  function move_to_position(destination_x, destination_y) {
+  const deltaX = destination_x - worldX
+  const deltaY = destination_y - worldY;
+  const dir = Math.atan2(deltaY, deltaX);
+  // ======================================================= shadam's code
+  if (dir > -Math.PI * 2 / 6 && dir < Math.PI * 2 / 6) {//d
+    extern.onKeyDown(keyTable["d"]);
+    extern.onKeyUp(keyTable["a"]);
+  } else if (dir < -Math.PI * 4 / 6 || dir > Math.PI * 4 / 6) {//a
+    extern.onKeyUp(keyTable["d"]);
+    extern.onKeyDown(keyTable["a"]);
+  }
+  if (dir > Math.PI * 1 / 6 && dir < Math.PI * 5 / 6) {//s
+    extern.onKeyDown(keyTable["s"]);
+    extern.onKeyUp(keyTable["w"]);
+  } else if (dir > -Math.PI * 5 / 6 && dir < -Math.PI * 1 / 6) {//w
+    extern.onKeyUp(keyTable["d"]);
+    extern.onKeyDown(keyTable["a"]);
+  }
+  // =======================================================
+}
 
 
 
@@ -1353,6 +1375,16 @@ const statNumbers = {
                 window.extern.onTouchMove(-1, lx, ly, 1);
             }, 35);
         }
+
+      moveToPosition(wx, wy){
+        move_to_position(wx, wy);
+      }
+      resetMovement(){
+        extern.onKeyUp(keyTable["w"]);
+        extern.onKeyUp(keyTable["a"]);
+        extern.onKeyUp(keyTable["s"]);
+        extern.onKeyUp(keyTable["d"]);
+      }
     }
     class LeaderboardReader
     {
